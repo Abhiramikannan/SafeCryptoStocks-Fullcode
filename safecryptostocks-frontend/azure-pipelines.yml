@@ -1,0 +1,176 @@
+trigger:
+- master
+
+resources:
+- repo: self
+
+variables:
+  dockerRegistryServiceConnection: '21c3c905-b6f1-485c-ab2f-ae221202c5a3'
+  imageRepository: 'frontend'
+  containerRegistry: 'abhiacr1.azurecr.io'
+  dockerfilePath: './front-end/web/Dockerfile'
+  tag: '$(Build.BuildId)'
+  imagePullSecret: 'abhiacr117875279-auth'
+  aks1serviceconnection: 'f1edbf86-7c73-497d-8efa-00a48ff07302' # Central India
+  aks2serviceconnection: '1f5efad6-2930-4b76-b388-39da128049e2' # West US 2
+  vmImageName: 'abhi-vm' # Ensure this is the correct VM Image name for your agent pool
+
+# Link your variable group here to get mongo-uri
+
+  group: mongodb
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      name: abhipool
+      vmImage: $(vmImageName)
+    steps:
+    
+
+    - task: Docker@2
+      displayName: Build and push an image to container registry
+      inputs:
+        command: buildAndPush
+        repository: $(imageRepository)
+        dockerfile: $(dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        tags: |
+          $(tag)
+
+    - upload: front-end/web
+      artifact: manifests
+      
+
+# ===================== Central India Deployment =====================
+- stage: Deploy1
+  displayName: Deploy to Central India AKS
+  dependsOn: Build
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy Central India
+    pool:
+      name: abhipool
+      vmImage: $(vmImageName)
+    environment: 'userservice-1040.default' # Ensure this environment name is correct in Azure DevOps
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: manifests
+
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret
+            inputs:
+              action: createSecret
+              secretName: $(imagePullSecret)
+              dockerRegistryEndpoint: $(dockerRegistryServiceConnection)
+              kubernetesServiceConnection: $(aks1serviceconnection)
+
+          # - task: KubernetesManifest@0
+          #   displayName: Apply SecretProviderClass (Central India)
+          #   inputs:
+          #     action: deploy
+          #     kubernetesServiceConnection: $(aks1serviceconnection)
+          #     namespace: default
+          #     manifests: |
+          #       manifests/secretproviderclass-centralindia.yaml
+
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              kubernetesServiceConnection: $(aks1serviceconnection)
+              namespace: default
+              manifests: |
+                manifests/deployment.yml
+                manifests/service.yml
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(containerRegistry)/$(imageRepository):$(tag)
+
+# ===================== West US 2 Deployment =====================
+- stage: Deploy2
+  displayName: Deploy to West US 2 AKS
+  dependsOn: Build
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy West US 2
+    pool:
+      name: abhipool
+      vmImage: $(vmImageName)
+    environment: 'userservice.default' # Ensure this environment name is correct in Azure DevOps
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: manifests
+
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret
+            inputs:
+              action: createSecret
+              secretName: $(imagePullSecret)
+              dockerRegistryEndpoint: $(dockerRegistryServiceConnection)
+              kubernetesServiceConnection: $(aks2serviceconnection)
+
+          # - task: KubernetesManifest@0
+          #   displayName: Apply SecretProviderClass (West US 2)
+          #   inputs:
+          #     action: deploy
+          #     kubernetesServiceConnection: $(aks2serviceconnection)
+          #     namespace: default
+          #     manifests: |
+          #       manifests/secretproviderclass-centralindia.yaml
+
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              kubernetesServiceConnection: $(aks2serviceconnection)
+              namespace: default
+              manifests: |
+                manifests/deployment.yml
+                manifests/service.yml
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(containerRegistry)/$(imageRepository):$(tag)
+# ===================== Snyk Security Scan =====================
+# - stage: SecurityScan
+#   displayName: Run Snyk Security Scan
+#   dependsOn: Build
+#   jobs:
+#   - job: SecurityScan
+#     displayName: Run Snyk for SCM
+#     pool:
+#       name: abhipool
+#       vmImage: $(vmImageName)
+#     steps:
+#     - task: NodeTool@0
+#       inputs:
+#         versionSpec: '20.x'
+#       displayName: 'Ensure Node.js for Snyk'
+
+#     - script: |
+#         echo "Installing Snyk CLI..."
+#         npm install -g snyk
+#       displayName: 'Install Snyk CLI'
+
+#     - script: |
+#         echo "Authenticating with Snyk..."
+#         snyk auth $(SNYK_TOKEN)
+      
+
+#     - script: |
+#         snyk test --all-projects --severity-threshold=medium --json > snyk-report.json
+#         cat snyk-report.json
+#       displayName: 'Run Snyk Test'
+
+

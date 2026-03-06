@@ -1,0 +1,76 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+resources:
+- repo: self
+
+pool:
+  name: abhipool
+  vmImage: abhi-vm
+
+variables:
+  # Link to the variable group you created for sensitive Terraform variables
+  - group: 'TerraformSecrets' # Ensure this matches the name of your Variable Group in Azure DevOps Library
+  # Define the name of your Azure Service Connection created earlier
+  - name: azureServiceConnection
+    value: 'abhi-subscription' # Make sure this EXACTLY matches the name of your Service Connection
+
+stages:
+- stage: Terraform_Infrastructure_Deployment
+  displayName: 'Deploy Azure Infrastructure with Terraform'
+  jobs:
+  - job: ApplyTerraform
+    displayName: 'Run Terraform Apply'
+    steps:
+
+    # ----------- Terraform Init ------------
+    - task: AzureCLI@2
+      displayName: 'Terraform Init'
+      inputs:
+        azureSubscription: 'abhi-subscription'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          set -x
+          cd terraform-code
+          terraform init -input=false
+
+    # ----------- Terraform Plan ------------
+    - task: AzureCLI@2
+      displayName: 'Terraform Plan'
+      inputs:
+        azureSubscription: 'abhi-subscription'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          set -x
+          cd terraform-code
+          terraform plan \
+            -var="db_username=$(db_username)" \
+            -var="db_password=$(db_password)" \
+            -input=false \
+            -out=tfplan
+
+    # ----------- Terraform Apply (only if tfplan exists) ------------
+    - task: AzureCLI@2
+      displayName: 'Terraform Apply'
+      inputs:
+        azureSubscription: 'abhi-subscription'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          set -x
+          cd terraform-code
+          if [ -f tfplan ]; then
+            echo "✅ tfplan exists. Proceeding with apply."
+            terraform apply tfplan
+            echo "✅ Terraform Apply completed."
+          else
+            echo "❌ tfplan not found. Skipping apply."
+            exit 1
+          fi
